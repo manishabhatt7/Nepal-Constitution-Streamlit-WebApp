@@ -22,32 +22,52 @@ from dotenv import load_dotenv
 import os
 from uuid import uuid4
 import traceback
-import logging
+import logging # Ensure logging is imported
 import streamlit as st
 
 # --- LangChain Message Types for Chat History ---
 from langchain_core.messages import HumanMessage, AIMessage
 
-# ------------------------ LOGGING SETUP ------------------------
-log_file = "chatbot_app.log"
-log_dir = os.path.dirname(log_file)
+# --- Determine the directory of the script for robust logging path ---
+# THIS SHOULD BE DEFINED EARLY, BEFORE LOGGING IS CONFIGURED
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# --- Define the full path for the log file (e.g., in a 'logs' subdirectory or next to the script) ---
+# Option 1: Log file in the same directory as the script
+LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "chatbot_app.log")
+# Option 2: Log file in a 'logs' subdirectory (uncomment next two lines and comment out Option 1)
+# LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
+# LOG_FILE_PATH = os.path.join(LOG_DIR, "chatbot_app.log")
 
-# Only create directory if log_dir is not empty (i.e., if log_file specifies a subdirectory)
-if log_dir and not os.path.exists(log_dir):
-    os.makedirs(log_dir, exist_ok=True)
-    logging.info(f"Log directory '{log_dir}' created.")
-elif not log_dir:
-    logging.info(f"Logging to current directory. Log file: '{log_file}'")
+
+# ------------------------ LOGGING SETUP ------------------------
+log_file_to_use = LOG_FILE_PATH # Use the fully defined path
+
+# Get the directory part of the log file path
+log_dir_for_creation = os.path.dirname(log_file_to_use)
+
+# Only create directory if log_file specifies a subdirectory that doesn't exist
+# And if log_dir_for_creation is not the same as SCRIPT_DIR (meaning it IS a subdirectory)
+if log_dir_for_creation and log_dir_for_creation != SCRIPT_DIR and not os.path.exists(log_dir_for_creation):
+    try:
+        os.makedirs(log_dir_for_creation, exist_ok=True)
+        # Use print here, as logging might not be fully configured yet to write to file
+        print(f"Log directory '{log_dir_for_creation}' created.")
+    except Exception as e:
+        print(f"Error creating log directory '{log_dir_for_creation}': {e}")
+# elif not log_dir_for_creation: # This case is less likely with absolute paths but good for completeness
+    # print(f"Logging to current directory (or script directory). Log file: '{log_file_to_use}'")
 
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
     handlers=[
-        logging.FileHandler(log_file), # This will create the file if it doesn't exist
+        logging.FileHandler(log_file_to_use), # Use the full, consistent path
         logging.StreamHandler() # Also log to console
     ]
 )
+logging.info("--- Logging Initialized (Corrected Path) ---") # Add this to confirm
+
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("qdrant_client").setLevel(logging.WARNING)
@@ -67,7 +87,7 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_HOST_LOCAL = os.getenv("QDRANT_HOST_LOCAL", "localhost")
 QDRANT_PORT_LOCAL = int(os.getenv("QDRANT_PORT_LOCAL", 6333))
 
-QDRANT_COLLECTION_NAME = "nepal_constitution_streamlit" # Updated name
+QDRANT_COLLECTION_NAME = "nepal_constitution_streamlit" 
 
 EMBEDDING_MODEL_DIMENSION = 1536
 CHAT_MODEL_NAME = "gpt-4o"
@@ -223,8 +243,12 @@ def setup_qdrant_vector_store(text_chunks, user_openai_api_key):
             except Exception as e:
                 raise RuntimeError(f"Embedding process failed: {e}")
 
-            if chunk_vectors and len(chunk_vectors[0]) != EMBEDDING_MODEL_DIMENSION:
+            if not chunk_vectors : # Check if chunk_vectors is empty
+                 logging.error("CRITICAL: No embeddings received from OpenAI, though no API error was raised.")
+                 raise RuntimeError("Embedding process returned no vectors.")
+            if len(chunk_vectors[0]) != EMBEDDING_MODEL_DIMENSION: # Check dimension of first vector
                 raise RuntimeError("Embedding dimension mismatch!")
+
 
             points_to_add = [
                 PointStruct(id=str(uuid4()), vector=vec, payload={"page_content": chunk.page_content, "metadata": chunk.metadata})
@@ -249,7 +273,7 @@ def setup_qdrant_vector_store(text_chunks, user_openai_api_key):
     logging.info(f"LangChain Qdrant vector store adapter for '{QDRANT_COLLECTION_NAME}' ready.")
     return langchain_qdrant_vector_store
 
-# == Part 3: Conversational AI Setup == (Identical to previous good version)
+# == Part 3: Conversational AI Setup ==
 def create_conversational_ai_chain(vector_store_for_retrieval, user_openai_api_key):
     logging.info("Setting up the conversational AI chain...")
     if not user_openai_api_key:
@@ -311,7 +335,7 @@ def create_conversational_ai_chain(vector_store_for_retrieval, user_openai_api_k
     logging.info("Conversational AI chain created successfully.")
     return conversational_chain
 
-# == Part 4: Interacting with the Chatbot == (Identical to previous good version)
+# == Part 4: Interacting with the Chatbot ==
 def get_answer_from_ai(ai_chain, user_question, conversation_history):
     if not isinstance(user_question, str) or not user_question.strip():
         raise ValueError("Question must be a non-empty string.")
@@ -335,13 +359,11 @@ def initialize_chatbot_backend():
     if not OPENAI_API_KEY:
         raise ValueError("OpenAI API Key not configured. Set in .env or Streamlit secrets.")
 
-    # Check for Qdrant Cloud vars IF QDRANT_URL is set (primary deployment mode)
-    # Or if running in Streamlit Cloud and QDRANT_URL is expected but missing
     is_streamlit_cloud = os.getenv("STREAMLIT_SERVER_MODE") == "cloud" or "streamlit.app" in os.getenv("STREAMLIT_SERVER_ORIGIN", "")
 
-    if QDRANT_URL and not QDRANT_API_KEY: # If URL is set, API key must also be set
+    if QDRANT_URL and not QDRANT_API_KEY:
          raise ValueError("QDRANT_API_KEY not configured for Qdrant Cloud. Set in .env or Streamlit secrets.")
-    if is_streamlit_cloud and not QDRANT_URL: # In cloud, QDRANT_URL must be set
+    if is_streamlit_cloud and not QDRANT_URL:
          raise ValueError("QDRANT_URL not configured for cloud deployment. Set in Streamlit secrets.")
 
 
@@ -356,10 +378,9 @@ def run_constitution_chatbot_app():
     st.set_page_config(page_title="🇳🇵 Constitution of Nepal Chatbot", page_icon="🇳🇵", layout="wide")
     st.title("🇳🇵 Chat with the Constitution of Nepal")
     st.caption(f"AI Model: '{CHAT_MODEL_NAME}'. Source: '{os.path.basename(PDF_PATH)}'")
-    # st.markdown(f"Logs: `{log_file}` (local) / deployment console.") # Optional dev info
+    # st.markdown(f"Logs are written to: `{LOG_FILE_PATH}` (locally). View console for cloud deployment logs.") # MODIFIED to show full path
     st.markdown("---")
 
-    # Pre-initialization checks for clearer UI errors
     if not OPENAI_API_KEY:
         st.error("CRITICAL: OpenAI API Key is missing. Please configure it.")
         return
@@ -379,7 +400,6 @@ def run_constitution_chatbot_app():
         logging.critical(f"Streamlit UI: Backend initialization failed: {e}", exc_info=True)
         return
 
-    # Session state initialization (same as before)
     if "chat_messages_for_display" not in st.session_state:
         st.session_state.chat_messages_for_display = [{"role": "assistant", "content": "Namaste! Ask about the Constitution of Nepal."}]
     if "langchain_chat_history_objects" not in st.session_state:
@@ -391,7 +411,6 @@ def run_constitution_chatbot_app():
     if "global_feedback_target_id" not in st.session_state:
         st.session_state.global_feedback_target_id = None
 
-    # Chat display (same as before)
     chat_display_area = st.container()
     with chat_display_area:
         for msg_data in st.session_state.chat_messages_for_display:
@@ -404,52 +423,40 @@ def run_constitution_chatbot_app():
 
     user_query = st.chat_input("Ask your question...")
 
-    # Feedback buttons 
     if st.session_state.last_ai_response_details:
         st.markdown("---")
         last_resp_id = st.session_state.last_ai_response_details["id"]
-
-        # MODIFIED LINE: Ensure feedback_given is explicitly boolean
         feedback_given_for_current_response = (
             st.session_state.global_feedback_status_for_last_response is not None and
             st.session_state.global_feedback_target_id == last_resp_id
         )
-        # Or even more explicitly:
-        # feedback_given_for_current_response = bool(
-        #     st.session_state.global_feedback_status_for_last_response and # Check if not None and not empty string
-        #     st.session_state.global_feedback_target_id == last_resp_id
-        # )
-
         cols = st.columns([0.08, 0.08, 0.84])
-
-        # Use the new boolean variable for button type and disabled state
         up_type = "primary" if st.session_state.global_feedback_status_for_last_response == "liked" and feedback_given_for_current_response else "secondary"
         down_type = "primary" if st.session_state.global_feedback_status_for_last_response == "disliked" and feedback_given_for_current_response else "secondary"
 
         if cols[0].button("👍", key=f"up_{last_resp_id}",
-                          disabled=feedback_given_for_current_response, # Use the explicitly boolean variable
+                          disabled=feedback_given_for_current_response,
                           type=up_type, use_container_width=True, help="Helpful"):
-            if not feedback_given_for_current_response: # Check the boolean variable
+            if not feedback_given_for_current_response:
                 st.session_state.global_feedback_status_for_last_response = "liked"
                 st.session_state.global_feedback_target_id = last_resp_id
                 st.toast("Thanks for feedback! 😊", icon="😊")
-                logging.info(f"Feedback: Liked ID {last_resp_id}")
+                logging.info(f"Feedback: Liked ID {last_resp_id} - '{st.session_state.last_ai_response_details['content'][:70]}...'")
                 st.rerun()
         if cols[1].button("👎", key=f"down_{last_resp_id}",
-                          disabled=feedback_given_for_current_response, # Use the explicitly boolean variable
+                          disabled=feedback_given_for_current_response,
                           type=down_type, use_container_width=True, help="Not helpful"):
-            if not feedback_given_for_current_response: # Check the boolean variable
+            if not feedback_given_for_current_response:
                 st.session_state.global_feedback_status_for_last_response = "disliked"
                 st.session_state.global_feedback_target_id = last_resp_id
                 st.toast("Thanks for feedback. We'll improve! 😕", icon="😕")
-                logging.info(f"Feedback: Disliked ID {last_resp_id}")
+                logging.info(f"Feedback: Disliked ID {last_resp_id} - '{st.session_state.last_ai_response_details['content'][:70]}...'")
                 st.rerun()
 
-    # Process user input (same as before)
     if user_query:
         st.session_state.chat_messages_for_display.append({"role": "user", "content": user_query})
         st.session_state.langchain_chat_history_objects.append(HumanMessage(content=user_query))
-        st.session_state.global_feedback_status_for_last_response = None # Reset for new response
+        st.session_state.global_feedback_status_for_last_response = None
         st.session_state.global_feedback_target_id = None
 
         ai_answer, sources_display = "", []
@@ -493,7 +500,8 @@ if __name__ == "__main__":
     script_name = os.path.basename(__file__)
     print(f"To run this Streamlit application ({script_name}):")
     print(f"1. Ensure '{PDF_PATH}' is present.")
-    print("2. For Cloud Qdrant: Set OPENAI_API_KEY, QDRANT_URL, QDRANT_API_KEY in .env or environment.")
-    print("3. For Local Qdrant: Set OPENAI_API_KEY in .env. Ensure QDRANT_URL is NOT set. Optionally set QDRANT_HOST_LOCAL/QDRANT_PORT_LOCAL if not defaults.")
-    print(f"4. Run: streamlit run {script_name}")
+    print(f"2. Logs will be attempted at: {LOG_FILE_PATH}") # MODIFIED to show full path
+    print("3. For Cloud Qdrant: Set OPENAI_API_KEY, QDRANT_URL, QDRANT_API_KEY in .env or environment.")
+    print("4. For Local Qdrant: Set OPENAI_API_KEY in .env. Ensure QDRANT_URL is NOT set. Optionally set QDRANT_HOST_LOCAL/QDRANT_PORT_LOCAL if not defaults.")
+    print(f"5. Run: streamlit run {script_name}")
     run_constitution_chatbot_app()

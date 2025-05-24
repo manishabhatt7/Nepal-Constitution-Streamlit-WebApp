@@ -3,17 +3,18 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environment
+# Virtual environments
 venv/
 *.venv
 env/
 ENV/
-# If you named your venv something else, add it here
+venv_clean/  # Add this specific line for your current venv
+.venv/       # Another common name for venvs
 
 # Secrets and environment variables
 .env
 *.env.*
-secrets.toml # For Streamlit secrets if managed locally, though usually not committed
+secrets.toml
 
 # IDE / Editor specific
 .vscode/
