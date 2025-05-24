@@ -1,3 +1,34 @@
-.env
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+*.venv
+env/
+ENV/
+# If you named your venv something else, add it here
+
+# Secrets and environment variables
+.env
+*.env.*
+secrets.toml # For Streamlit secrets if managed locally, though usually not committed
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sublime-workspace
+
+# Data and Logs (that shouldn't be in the repo)
+qdrant_data/
+chatbot_app.log
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
